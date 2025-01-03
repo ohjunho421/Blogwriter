@@ -7,8 +7,8 @@ import pyperclip  # 클립보드 복사 모듈
 from bs4 import BeautifulSoup  # 구글 학술검색용
 
 # 네이버 API 설정
-NAVER_API_ID = "3s0tg6wss8"
-NAVER_API_SECRET = "vcXoL8hoyDKc0rQB9a6c4cGr09LpTPQKm1JnNTPs"
+NAVER_API_ID = st.secrets["api_keys"]["naver_id"]
+NAVER_API_SECRET = st.secrets["api_keys"]["naver_secret"]
 
 # OpenAI API 설정
 openai.api_key = os.getenv("OPENAI_API_KEY")
