@@ -1,0 +1,4 @@
+# Streamlit Secrets
+.streamlit/secrets.toml
+sensitive_file.txt
+config/secrets.toml
