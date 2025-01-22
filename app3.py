@@ -5,12 +5,20 @@ import re
 import os
 import pyperclip  # 클립보드 복사 모듈
 from bs4 import BeautifulSoup  # 구글 학술검색용
+from concurrent.futures import ThreadPoolExecutor
 
-# 네이버 API 설정
+def fetch_all_data():
+    with ThreadPoolExecutor() as executor:
+        future_naver = executor.submit(fetch_quantitative_data, section_title, keyword)
+        future_google = executor.submit(fetch_google_scholar_data, keyword)
+        naver_data = future_naver.result()
+        google_data = future_google.result()
+    return naver_data, google_data
+
 NAVER_API_ID = st.secrets["api_keys"]["naver_id"]
 NAVER_API_SECRET = st.secrets["api_keys"]["naver_secret"]
-
-# OpenAI API 설정
+GOOGLE_API_KEY = st.secrets["api_keys"]["google_api_key"]
+GOOGLE_CX = st.secrets["api_keys"]["google_cx"]
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # 세션 초기화
@@ -69,7 +77,7 @@ def recommend_subtopics(keyword):
         return []
 
 # 네이버 API 정량 데이터 검색
-def fetch_quantitative_data(section_title, keyword):
+def fetch_quantitative_data_naver(section_title, keyword):
     references = []
     try:
         query = f"{keyword} {section_title}"
@@ -94,32 +102,36 @@ def fetch_quantitative_data(section_title, keyword):
         st.error(f"네이버 API 검색 오류: {e}")
     return references
 
-# 구글 학술검색 대체 데이터 크롤링
-def fetch_google_scholar_data(keyword):
-    url = f"https://scholar.google.com/scholar?q={keyword}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+# 구글 API 정량 데이터 검색
+def fetch_quantitative_data_google(section_title, keyword):
+    query = f"{keyword} {section_title}"
+    url = f"https://www.googleapis.com/customsearch/v1?q={query}&key={GOOGLE_API_KEY}&cx={GOOGLE_CX}"
     references = []
     try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, "html.parser")
-        for item in soup.select(".gs_rt")[:2]:
-            title = item.text
-            link = item.find("a")["href"] if item.find("a") else "링크 없음"
-            snippet = item.find_next("div", class_="gs_rs").text if item.find_next("div", class_="gs_rs") else ""
-            references.append({"title": title, "url": link, "snippet": snippet, "source": "구글 학술검색"})
+        response = requests.get(url)
+        if response.status_code == 200:
+            items = response.json().get("items", [])
+            for item in items[:2]:  # 상위 2개의 결과만 사용
+                references.append({
+                    "title": remove_html_tags(item.get("title", "")),
+                    "url": item.get("link", ""),
+                    "snippet": item.get("snippet", ""),
+                    "source": "Google 검색"
+                })
+        else:
+            st.error(f"Google API 오류: {response.status_code}")
     except Exception as e:
-        st.error(f"구글 학술검색 크롤링 오류: {e}")
+        st.error(f"Google API 호출 오류: {e}")
     return references
 
 # 본문 생성 및 참고자료 포함
 def generate_section_content_with_references(section_title, keyword, additional_words):
-    references = fetch_quantitative_data(section_title, keyword)
-    if not references:  # 네이버 API에서 데이터가 없으면 구글 학술검색 사용
-        references = fetch_google_scholar_data(keyword)
+    references = fetch_quantitative_data_naver(section_title, keyword)
+    if not references:  # 네이버 API에서 데이터가 없으면 구글 API 사용
+        references = fetch_quantitative_data_google(section_title, keyword)
 
     ref_summary = "\n".join([
-        f"- [{remove_html_tags(ref['title'])}]({ref['url']}) ({ref['source']}): {ref['snippet']}"
-        for ref in references
+        f"- [{ref['title']}]({ref['url']}): {ref['snippet']}" for ref in references
     ]) if references else "참고자료 없음."
 
     prompt = f"""
@@ -137,7 +149,7 @@ def generate_section_content_with_references(section_title, keyword, additional_
         response = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "전문적이고 신뢰성 있는 글을 작성하는 블로그 작가입니다."},
+                {"role": "system", "content": "전문적이고 신뢰성 있는 블로그 글을 작성하는 도우미입니다."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
